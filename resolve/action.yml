@@ -82,7 +82,7 @@ runs:
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         github_token: ${{ inputs.github_token }}
         allowed_bots: 'github-actions[bot]'
-        claude_args: "${{ inputs.claude_model && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,Edit,Glob,Grep,mcp__linear-server__get_issue,mcp__linear-server__update_issue,mcp__linear-server__create_comment"
+        claude_args: "${{ inputs.claude_model != '' && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,Edit,Glob,Grep,mcp__linear-server__get_issue,mcp__linear-server__update_issue,mcp__linear-server__create_comment"
         prompt: |
           You are a senior software engineer resolving a production issue detected from Datadog monitoring.
 
@@ -217,7 +217,7 @@ runs:
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         github_token: ${{ inputs.github_token }}
         allowed_bots: 'github-actions[bot]'
-        claude_args: "${{ inputs.claude_model && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools mcp__linear-server__update_issue,mcp__linear-server__create_comment"
+        claude_args: "${{ inputs.claude_model != '' && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools mcp__linear-server__update_issue,mcp__linear-server__create_comment"
         prompt: |
           Update the Linear issue ${{ inputs.issue_id }}:
           1. Use `mcp__linear-server__create_comment` to add: "Auto-fix PR created: ${{ steps.pr.outputs.pull-request-url }}"
