@@ -133,6 +133,16 @@ See [`.github/workflows/example-pipeline.yml`](.github/workflows/example-pipelin
 2. Automatically triggers the resolver for each new ticket
 3. Limits parallel resolution to 2 concurrent PRs
 
+## Security & Disclaimer
+
+> **This project is in early stages.** It uses AI to modify code and create pull requests autonomously. Use at your own discretion and always review generated PRs before merging.
+
+**Recommended security practices:**
+- Use **read-only API keys** for Datadog (the monitor only queries logs — it never writes)
+- Use a **scoped Linear API key** with minimal permissions (create/read issues)
+- **Always require PR reviews** — never auto-merge AI-generated pull requests
+- Start with `workflow_dispatch` (manual trigger) before enabling cron schedules
+
 ## Prerequisites
 
 - [Datadog](https://www.datadoghq.com/) account with API access
