@@ -1,0 +1,246 @@
+name: 'AI On-Call Agent — Issue Resolver'
+description: 'Automatically investigate a Linear issue, implement a fix, and open a pull request using Claude Code.'
+author: 'ask-commit'
+
+branding:
+  icon: 'git-pull-request'
+  color: 'green'
+
+inputs:
+  claude_code_oauth_token:
+    description: 'Claude Code OAuth token'
+    required: true
+  github_token:
+    description: 'GitHub token'
+    required: true
+  linear_api_key:
+    description: 'Linear API key'
+    required: true
+  issue_id:
+    description: 'Linear issue ID (e.g. ENG-123)'
+    required: true
+  issue_url:
+    description: 'Linear issue URL'
+    required: false
+    default: ''
+  claude_model:
+    description: 'Claude model override (leave empty for default)'
+    required: false
+    default: ''
+  slack_webhook_url:
+    description: 'Slack incoming webhook URL. If provided, sends a notification when a PR is created.'
+    required: false
+    default: ''
+
+outputs:
+  pull-request-url:
+    description: 'URL of the created pull request'
+    value: ${{ steps.pr.outputs.pull-request-url }}
+  pull-request-number:
+    description: 'Number of the created pull request'
+    value: ${{ steps.pr.outputs.pull-request-number }}
+  branch_name:
+    description: 'Name of the fix branch'
+    value: ${{ steps.branch.outputs.branch_name }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Create MCP Config
+      shell: bash
+      run: |
+        cat > .mcp.json << EOF
+        {
+          "mcpServers": {
+            "linear-server": {
+              "command": "npx",
+              "args": ["-y", "@linear/mcp-server-linear"],
+              "env": {
+                "LINEAR_API_KEY": "${{ inputs.linear_api_key }}"
+              }
+            }
+          }
+        }
+        EOF
+
+    - name: Create Branch for Fix
+      id: branch
+      shell: bash
+      run: |
+        BRANCH_NAME="fix/auto-${{ inputs.issue_id }}-$(date +%s)"
+        git checkout -b "$BRANCH_NAME"
+        echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+    - name: Resolve Issue with Claude
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        github_token: ${{ inputs.github_token }}
+        allowed_bots: 'github-actions[bot]'
+        model: ${{ inputs.claude_model }}
+        claude_args: "--allowedTools Bash,Read,Write,Edit,Glob,Grep,mcp__linear-server__get_issue,mcp__linear-server__update_issue,mcp__linear-server__create_comment"
+        prompt: |
+          You are a senior software engineer resolving a production issue detected from Datadog monitoring.
+
+          ## Issue: ${{ inputs.issue_id }}
+
+          ## Available Tools
+          You have access to Linear MCP tools:
+          - `mcp__linear-server__get_issue` — Get full issue details
+          - `mcp__linear-server__update_issue` — Update issue status
+          - `mcp__linear-server__create_comment` — Add comments to the issue
+
+          ## Instructions
+
+          ### Step 1: Get Issue Details
+          Use `mcp__linear-server__get_issue` with id="${{ inputs.issue_id }}" to get the full issue details.
+
+          ### Step 2: Understand the Error
+          - Parse the error message, stack trace, and service from the issue
+          - Identify which files/components are involved
+          - Search the codebase for relevant code
+
+          ### Step 3: Investigate Root Cause
+          - Use Grep and Glob to find relevant code
+          - Read the files involved in the error
+          - Understand the code flow that leads to the error
+          - Identify the root cause
+
+          ### Step 4: Implement Fix
+          - Make the minimal necessary changes to fix the issue
+          - Follow existing code patterns and conventions
+          - Do NOT over-engineer — fix only what's broken
+
+          ### Step 5: Verify Fix
+          - Run type checking if applicable
+          - Run tests if relevant
+
+          ### Step 6: Commit Changes
+          ```bash
+          git add -A
+          git commit -m "fix: <concise description>
+
+          Resolves ${{ inputs.issue_id }}
+
+          Co-Authored-By: Claude <noreply@anthropic.com>"
+          ```
+
+          ### Step 7: Write PR Metadata
+          ```bash
+          cat > $GITHUB_WORKSPACE/pr-metadata.json << 'EOF'
+          {
+            "title": "fix: <concise description of the fix>",
+            "root_cause": "<1-2 sentence root cause explanation>",
+            "fix_summary": "<1-2 sentence summary of what was fixed>",
+            "files_changed": ["<list of files modified>"]
+          }
+          EOF
+          ```
+
+          ### Step 8: Add Comment to Linear
+          Use `mcp__linear-server__create_comment` to add a comment with:
+          - What you found (root cause)
+          - What you fixed
+          - Any notes for reviewers
+
+          ## Important Guidelines
+          - This is a PRODUCTION issue — be careful and precise
+          - If you cannot confidently fix the issue, document what you found
+          - Do NOT make unrelated changes
+      env:
+        LINEAR_API_KEY: ${{ inputs.linear_api_key }}
+
+    - name: Push Branch
+      shell: bash
+      run: |
+        git push -u origin ${{ steps.branch.outputs.branch_name }}
+
+    - name: Create Pull Request
+      id: pr
+      shell: bash
+      run: |
+        if [ -f pr-metadata.json ]; then
+          PR_TITLE=$(jq -r '.title // "fix: Auto-resolve ${{ inputs.issue_id }}"' pr-metadata.json)
+          ROOT_CAUSE=$(jq -r '.root_cause // "See issue for details"' pr-metadata.json)
+          FIX_SUMMARY=$(jq -r '.fix_summary // "See commit for details"' pr-metadata.json)
+          FILES_CHANGED=$(jq -r '.files_changed // [] | if length > 0 then "- `" + join("`\n- `") + "`" else "See commits" end' pr-metadata.json)
+        else
+          PR_TITLE="fix: Auto-resolve ${{ inputs.issue_id }}"
+          ROOT_CAUSE="See issue for details"
+          FIX_SUMMARY="See commit for details"
+          FILES_CHANGED="See commits"
+        fi
+
+        if [[ ! "$PR_TITLE" =~ "${{ inputs.issue_id }}" ]]; then
+          PR_TITLE="$PR_TITLE [${{ inputs.issue_id }}]"
+        fi
+
+        PR_URL=$(gh pr create \
+          --title "$PR_TITLE" \
+          --body "$(cat <<PREOF
+        ## Summary
+        $FIX_SUMMARY
+
+        ## Root Cause
+        $ROOT_CAUSE
+
+        ## Files Changed
+        $FILES_CHANGED
+
+        ## Issue
+        [${{ inputs.issue_id }}](${{ inputs.issue_url }})
+
+        ---
+        _Auto-generated by [AI On-Call Agent](https://github.com/ask-commit/ai-oncall-agent)_
+        PREOF
+        )" \
+          --head "${{ steps.branch.outputs.branch_name }}" \
+          --base main \
+          --label "auto-fix" || echo "PR_FAILED")
+
+        if [ -n "$PR_URL" ] && [ "$PR_URL" != "PR_FAILED" ]; then
+          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
+          echo "pull-request-url=$PR_URL" >> $GITHUB_OUTPUT
+          echo "pull-request-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+        fi
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+
+    - name: Update Linear Issue with PR Link
+      if: steps.pr.outputs.pull-request-number
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        github_token: ${{ inputs.github_token }}
+        allowed_bots: 'github-actions[bot]'
+        model: ${{ inputs.claude_model }}
+        claude_args: "--allowedTools mcp__linear-server__update_issue,mcp__linear-server__create_comment"
+        prompt: |
+          Update the Linear issue ${{ inputs.issue_id }}:
+          1. Use `mcp__linear-server__create_comment` to add: "Auto-fix PR created: ${{ steps.pr.outputs.pull-request-url }}"
+          2. Use `mcp__linear-server__update_issue` to set state to "In Review" if possible
+      env:
+        LINEAR_API_KEY: ${{ inputs.linear_api_key }}
+
+    - name: Notify Slack — PR Created
+      if: inputs.slack_webhook_url != '' && steps.pr.outputs.pull-request-url
+      shell: bash
+      run: |
+        curl -s -X POST "${{ inputs.slack_webhook_url }}" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Fix Ready for Review\n\nIssue: <${{ inputs.issue_url }}|${{ inputs.issue_id }}>\nPR: <${{ steps.pr.outputs.pull-request-url }}|View Pull Request>"
+                }
+              }
+            ]
+          }'
