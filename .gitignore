@@ -1,0 +1,5 @@
+.mcp.json
+tickets.json
+pr-metadata.json
+node_modules/
+.DS_Store

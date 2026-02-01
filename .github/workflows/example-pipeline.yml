@@ -1,0 +1,79 @@
+# Example: Full AI On-Call Agent Pipeline
+#
+# Copy this file into YOUR repository at .github/workflows/ai-oncall.yml
+# Then add the required secrets to your repository settings.
+#
+# This sets up:
+#   1. A cron-triggered monitor that scans Datadog for errors and creates Linear tickets
+#   2. A resolver that automatically opens fix PRs for each new ticket
+
+name: AI On-Call Agent
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Every hour — adjust as needed
+  workflow_dispatch:
+    inputs:
+      hours_back:
+        description: 'Hours to look back for errors'
+        required: false
+        default: '1'
+
+jobs:
+  # ── Stage 1: Monitor ──────────────────────────────────────────────
+  monitor:
+    name: Monitor Datadog Errors
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      new_tickets: ${{ steps.scan.outputs.new_tickets }}
+      duplicates_open: ${{ steps.scan.outputs.duplicates_open }}
+      duplicates_done: ${{ steps.scan.outputs.duplicates_done }}
+      has_results: ${{ steps.scan.outputs.has_results }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Error Monitor
+        id: scan
+        uses: ask-commit/ai-oncall-agent@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          datadog_api_key: ${{ secrets.DATADOG_API_KEY }}
+          datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
+          linear_api_key: ${{ secrets.LINEAR_API_KEY }}
+          linear_team: 'ENG'
+          hours_back: ${{ github.event.inputs.hours_back || '1' }}
+          slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # ── Stage 2: Resolve each new ticket ──────────────────────────────
+  resolve:
+    name: Resolve ${{ matrix.ticket.identifier }}
+    needs: monitor
+    if: needs.monitor.outputs.new_tickets != '[]' && needs.monitor.outputs.new_tickets != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    strategy:
+      matrix:
+        ticket: ${{ fromJson(needs.monitor.outputs.new_tickets) }}
+      max-parallel: 2
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Issue
+        uses: ask-commit/ai-oncall-agent/resolve@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          linear_api_key: ${{ secrets.LINEAR_API_KEY }}
+          issue_id: ${{ matrix.ticket.identifier }}
+          issue_url: ${{ matrix.ticket.url }}
+          slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}

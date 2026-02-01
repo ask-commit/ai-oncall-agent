@@ -1,0 +1,290 @@
+name: 'AI On-Call Agent — Error Monitor'
+description: 'Monitor Datadog for production errors, deduplicate, and create Linear tickets automatically using Claude Code.'
+author: 'ask-commit'
+
+branding:
+  icon: 'alert-circle'
+  color: 'red'
+
+inputs:
+  claude_code_oauth_token:
+    description: 'Claude Code OAuth token'
+    required: true
+  github_token:
+    description: 'GitHub token'
+    required: true
+  datadog_api_key:
+    description: 'Datadog API key'
+    required: true
+  datadog_app_key:
+    description: 'Datadog Application key'
+    required: true
+  linear_api_key:
+    description: 'Linear API key'
+    required: true
+  linear_team:
+    description: 'Linear team identifier'
+    required: false
+    default: 'ENG'
+  ticket_prefix:
+    description: 'Prefix for auto-created tickets'
+    required: false
+    default: '[Auto]'
+  hours_back:
+    description: 'Hours to look back for errors'
+    required: false
+    default: '1'
+  min_occurrences:
+    description: 'Minimum error count threshold before creating a ticket'
+    required: false
+    default: '3'
+  datadog_query:
+    description: 'Custom Datadog log query'
+    required: false
+    default: 'status:error OR status:critical'
+  claude_model:
+    description: 'Claude model override (leave empty for default)'
+    required: false
+    default: ''
+  slack_webhook_url:
+    description: 'Slack incoming webhook URL. If provided, sends a summary notification.'
+    required: false
+    default: ''
+
+outputs:
+  new_tickets:
+    description: 'JSON array of newly created Linear tickets'
+    value: ${{ steps.extract.outputs.new_tickets }}
+  duplicates_open:
+    description: 'JSON array of duplicate tickets that are still open'
+    value: ${{ steps.extract.outputs.duplicates_open }}
+  duplicates_done:
+    description: 'JSON array of duplicate tickets that were previously resolved'
+    value: ${{ steps.extract.outputs.duplicates_done }}
+  has_results:
+    description: 'Whether any results (new or duplicate) were found'
+    value: ${{ steps.extract.outputs.has_results }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Create MCP Config
+      shell: bash
+      run: |
+        cat > .mcp.json << EOF
+        {
+          "mcpServers": {
+            "linear-server": {
+              "command": "npx",
+              "args": ["-y", "@linear/mcp-server-linear"],
+              "env": {
+                "LINEAR_API_KEY": "${{ inputs.linear_api_key }}"
+              }
+            }
+          }
+        }
+        EOF
+
+    - name: Monitor Datadog and Create Linear Tickets
+      id: monitor
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        github_token: ${{ inputs.github_token }}
+        show_full_output: true
+        claude_args: "${{ inputs.claude_model != '' && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,mcp__linear-server__list_issues,mcp__linear-server__create_issue,mcp__linear-server__get_issue"
+        prompt: |
+          You are a DevOps monitoring agent. Check Datadog for errors in the last ${{ inputs.hours_back }} hour(s) and create Linear tickets.
+
+          ## Instructions
+
+          ### Step 1: Query Datadog for Errors
+          ```bash
+          NOW=$(date +%s)
+          HOURS_AGO=$((NOW - 3600 * ${{ inputs.hours_back }}))
+
+          curl -s -X POST "https://api.datadoghq.com/api/v2/logs/events/search" \
+            -H "Content-Type: application/json" \
+            -H "DD-API-KEY: ${DATADOG_API_KEY}" \
+            -H "DD-APPLICATION-KEY: ${DATADOG_APP_KEY}" \
+            -d '{
+              "filter": {
+                "from": "'${HOURS_AGO}'000",
+                "to": "'${NOW}'000",
+                "query": "${{ inputs.datadog_query }}"
+              },
+              "sort": "-timestamp",
+              "page": { "limit": 100 }
+            }'
+          ```
+
+          ### Step 2: Check Triggered Monitors
+          ```bash
+          curl -s "https://api.datadoghq.com/api/v1/monitor" \
+            -H "DD-API-KEY: ${DATADOG_API_KEY}" \
+            -H "DD-APPLICATION-KEY: ${DATADOG_APP_KEY}" | jq '[.[] | select(.overall_state == "Alert" or .overall_state == "Warn")]'
+          ```
+
+          ### Step 3: Consolidate & Analyze
+
+          **CONSOLIDATION RULES — Create ONE ticket per ROOT CAUSE, not per error message:**
+
+          1. **Group by ROOT CAUSE, not surface error**:
+             - If multiple components fail with "Invalid JSON" errors, that's ONE root cause
+             - If multiple files have "connection refused", that's ONE root cause: "database connectivity"
+
+          2. **Create a FINGERPRINT per root cause**: `[service]:[root-cause-slug]`
+             - Good: `backend:llm-json-parsing` (covers all components with JSON issues)
+             - Bad: `backend:handler-a-json-error` + `backend:handler-b-json-error` (too granular)
+
+          3. **Include ALL affected components in one ticket**:
+             - List all functions/services affected by the same root cause
+             - Show total occurrences across all components
+
+          4. **Skip transient errors**: Fewer than ${{ inputs.min_occurrences }} total occurrences = likely transient, skip
+
+          5. **Fingerprint examples**:
+             - Multiple JSON parse errors across services -> `backend:llm-json-format`
+             - IAM permission errors -> `aws:iam-permission-denied`
+             - Database connection issues -> `database:connection-failed`
+
+          ### Step 4: Check for Existing OPEN Issues in Linear
+          Use `mcp__linear-server__list_issues` to check for existing issues:
+          - team: "${{ inputs.linear_team }}"
+          - query: "${{ inputs.ticket_prefix }}"
+          - includeArchived: false
+
+          **DEDUPLICATION RULES:**
+          - Search the DESCRIPTION of existing issues for the same fingerprint pattern
+          - If an existing OPEN issue has the same service AND same error type, SKIP creating a new ticket
+          - Match by ERROR PATTERN, not exact title
+          - If a ticket is "Done"/"Canceled" AND was updated MORE than 24 hours ago, create a NEW ticket (error has recurred)
+          - If a ticket is "Done"/"Canceled" but was updated WITHIN the last 24 hours, SKIP (give time for fix to propagate)
+
+          ### Step 5: Create Linear Tickets
+          For EACH unique error that doesn't have an existing ticket, use `mcp__linear-server__create_issue`:
+          - team: "${{ inputs.linear_team }}"
+          - title: "${{ inputs.ticket_prefix }} <concise error title>" (avoid parentheses in titles — use dashes instead)
+          - priority: 2 (High) for critical errors, 3 (Normal) for regular errors
+
+          **IMPORTANT**: After calling `create_issue`, capture the `id`, `identifier`, and `url` from the response.
+
+          Use this markdown template for the description:
+          ```markdown
+          <!-- FINGERPRINT: <service>:<root-cause-slug> -->
+
+          ## Error Summary
+          **Service:** <service-name>
+          **Root Cause:** <concise root cause>
+          **Total Occurrences:** <total count> in the last <hours> hours
+          **First seen:** <timestamp>
+          **Last seen:** <timestamp>
+
+          ## Affected Components
+          | Component | File | Occurrences | Sample Error |
+          |-----------|------|-------------|--------------|
+          | <name> | `<file-path>` | <count> | <brief error> |
+
+          ## Common Error Pattern
+          ```
+          <the common error pattern across all components>
+          ```
+
+          ## Sample Stack Trace
+          ```
+          <one representative stack trace>
+          ```
+
+          ## Sample Log Entry
+          ```json
+          <one complete raw log entry>
+          ```
+
+          ## Root Cause Analysis
+          <analysis of what's causing this error>
+
+          ## Suggested Fix
+          <specific actionable steps>
+
+          ## Related Links
+          - [Datadog Logs](https://app.datadoghq.com/logs?query=...)
+          ```
+
+          ### Step 6: Output Results
+          Write a structured summary:
+          ```bash
+          cat > $GITHUB_WORKSPACE/tickets.json << 'EOF'
+          {
+            "new": [
+              {"id": "issue-uuid", "identifier": "ENG-XXX", "url": "https://linear.app/...", "title": "..."}
+            ],
+            "duplicates_open": [
+              {"identifier": "ENG-YYY", "url": "https://linear.app/...", "title": "...", "status": "In Progress"}
+            ],
+            "duplicates_done": [
+              {"identifier": "ENG-ZZZ", "url": "https://linear.app/...", "title": "...", "status": "Done"}
+            ]
+          }
+          EOF
+          ```
+
+          If no errors found:
+          ```bash
+          echo '{"new":[],"duplicates_open":[],"duplicates_done":[]}' > $GITHUB_WORKSPACE/tickets.json
+          ```
+      env:
+        DATADOG_API_KEY: ${{ inputs.datadog_api_key }}
+        DATADOG_APP_KEY: ${{ inputs.datadog_app_key }}
+        LINEAR_API_KEY: ${{ inputs.linear_api_key }}
+
+    - name: Extract Tickets Output
+      id: extract
+      shell: bash
+      run: |
+        echo "Looking for tickets.json..."
+        ls -la tickets.json $GITHUB_WORKSPACE/tickets.json 2>/dev/null || echo "Not found in cwd or GITHUB_WORKSPACE"
+        # Check both current dir and GITHUB_WORKSPACE
+        TICKETS_FILE=""
+        if [ -f "$GITHUB_WORKSPACE/tickets.json" ]; then
+          TICKETS_FILE="$GITHUB_WORKSPACE/tickets.json"
+        elif [ -f "tickets.json" ]; then
+          TICKETS_FILE="tickets.json"
+        fi
+        if [ -n "$TICKETS_FILE" ]; then
+          echo "Found: $TICKETS_FILE"
+          NEW=$(cat "$TICKETS_FILE" | jq -c '.new // []')
+          DUPS_OPEN=$(cat "$TICKETS_FILE" | jq -c '.duplicates_open // []')
+          DUPS_DONE=$(cat "$TICKETS_FILE" | jq -c '.duplicates_done // []')
+
+          echo "new_tickets=$NEW" >> $GITHUB_OUTPUT
+          echo "duplicates_open=$DUPS_OPEN" >> $GITHUB_OUTPUT
+          echo "duplicates_done=$DUPS_DONE" >> $GITHUB_OUTPUT
+
+          TOTAL=$(cat "$TICKETS_FILE" | jq '[.new, .duplicates_open, .duplicates_done] | map(length) | add')
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "has_results=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_results=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "new_tickets=[]" >> $GITHUB_OUTPUT
+          echo "duplicates_open=[]" >> $GITHUB_OUTPUT
+          echo "duplicates_done=[]" >> $GITHUB_OUTPUT
+          echo "has_results=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Notify Slack
+      if: inputs.slack_webhook_url != '' && steps.extract.outputs.has_results == 'true'
+      shell: bash
+      run: bash ${{ github.action_path }}/scripts/slack-notify.sh
+      env:
+        NEW_TICKETS: ${{ steps.extract.outputs.new_tickets }}
+        DUPS_OPEN: ${{ steps.extract.outputs.duplicates_open }}
+        DUPS_DONE: ${{ steps.extract.outputs.duplicates_done }}
+        SLACK_WEBHOOK_URL: ${{ inputs.slack_webhook_url }}
+        GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
