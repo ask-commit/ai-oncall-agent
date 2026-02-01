@@ -19,7 +19,7 @@ High (2)
 ### Error Summary
 **Service:** backend
 **Root Cause:** LLM returning markdown-wrapped JSON instead of raw JSON, causing parse failures
-**Total Occurrences:** 47 in the last 1 hours
+**Total Occurrences:** 47 in the last hour
 **First seen:** 2025-01-15T08:12:33Z
 **Last seen:** 2025-01-15T09:01:44Z
 
