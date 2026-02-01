@@ -97,8 +97,7 @@ runs:
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         github_token: ${{ inputs.github_token }}
         show_full_output: true
-        model: ${{ inputs.claude_model }}
-        claude_args: "--allowedTools Bash,Read,Write,mcp__linear-server__list_issues,mcp__linear-server__create_issue,mcp__linear-server__get_issue"
+        claude_args: "${{ inputs.claude_model && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,mcp__linear-server__list_issues,mcp__linear-server__create_issue,mcp__linear-server__get_issue"
         prompt: |
           You are a DevOps monitoring agent. Check Datadog for errors in the last ${{ inputs.hours_back }} hour(s) and create Linear tickets.
 
