@@ -29,6 +29,8 @@ jobs:
       id-token: write
     outputs:
       new_tickets: ${{ steps.scan.outputs.new_tickets }}
+      duplicates_open: ${{ steps.scan.outputs.duplicates_open }}
+      duplicates_done: ${{ steps.scan.outputs.duplicates_done }}
       has_results: ${{ steps.scan.outputs.has_results }}
     steps:
       - uses: actions/checkout@v4
