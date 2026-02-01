@@ -246,16 +246,26 @@ runs:
       id: extract
       shell: bash
       run: |
-        if [ -f tickets.json ]; then
-          NEW=$(cat tickets.json | jq -c '.new // []')
-          DUPS_OPEN=$(cat tickets.json | jq -c '.duplicates_open // []')
-          DUPS_DONE=$(cat tickets.json | jq -c '.duplicates_done // []')
+        echo "Looking for tickets.json..."
+        ls -la tickets.json $GITHUB_WORKSPACE/tickets.json 2>/dev/null || echo "Not found in cwd or GITHUB_WORKSPACE"
+        # Check both current dir and GITHUB_WORKSPACE
+        TICKETS_FILE=""
+        if [ -f "$GITHUB_WORKSPACE/tickets.json" ]; then
+          TICKETS_FILE="$GITHUB_WORKSPACE/tickets.json"
+        elif [ -f "tickets.json" ]; then
+          TICKETS_FILE="tickets.json"
+        fi
+        if [ -n "$TICKETS_FILE" ]; then
+          echo "Found: $TICKETS_FILE"
+          NEW=$(cat "$TICKETS_FILE" | jq -c '.new // []')
+          DUPS_OPEN=$(cat "$TICKETS_FILE" | jq -c '.duplicates_open // []')
+          DUPS_DONE=$(cat "$TICKETS_FILE" | jq -c '.duplicates_done // []')
 
           echo "new_tickets=$NEW" >> $GITHUB_OUTPUT
           echo "duplicates_open=$DUPS_OPEN" >> $GITHUB_OUTPUT
           echo "duplicates_done=$DUPS_DONE" >> $GITHUB_OUTPUT
 
-          TOTAL=$(cat tickets.json | jq '[.new, .duplicates_open, .duplicates_done] | map(length) | add')
+          TOTAL=$(cat "$TICKETS_FILE" | jq '[.new, .duplicates_open, .duplicates_done] | map(length) | add')
           if [ "$TOTAL" -gt 0 ]; then
             echo "has_results=true" >> $GITHUB_OUTPUT
           else
