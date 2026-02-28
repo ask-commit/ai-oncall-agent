@@ -45,6 +45,7 @@ jobs:
           datadog_app_key: ${{ secrets.DATADOG_APP_KEY }}
           linear_api_key: ${{ secrets.LINEAR_API_KEY }}
           linear_team: 'ENG'
+          # linear_label_ids: 'label-uuid-1,label-uuid-2'  # Optional: comma-separated Linear label UUIDs
           hours_back: ${{ github.event.inputs.hours_back || '1' }}
           slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
 

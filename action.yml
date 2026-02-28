@@ -46,6 +46,10 @@ inputs:
     description: 'Claude model override (leave empty for default)'
     required: false
     default: ''
+  linear_label_ids:
+    description: 'Comma-separated Linear label UUIDs to apply to created tickets (e.g. "label-uuid-1,label-uuid-2")'
+    required: false
+    default: ''
   slack_webhook_url:
     description: 'Slack incoming webhook URL. If provided, sends a summary notification.'
     required: false
@@ -171,6 +175,7 @@ runs:
           - team: "${{ inputs.linear_team }}"
           - title: "${{ inputs.ticket_prefix }} <concise error title>" (avoid parentheses in titles — use dashes instead)
           - priority: 2 (High) for critical errors, 3 (Normal) for regular errors
+          ${{ inputs.linear_label_ids != '' && format('- labelIds: [{0}]', inputs.linear_label_ids) || '' }}
 
           **IMPORTANT**: After calling `create_issue`, capture the `id`, `identifier`, and `url` from the response.
 
