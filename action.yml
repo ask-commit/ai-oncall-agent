@@ -50,6 +50,18 @@ inputs:
     description: 'Comma-separated Linear label UUIDs to apply to created tickets (e.g. "label-uuid-1,label-uuid-2")'
     required: false
     default: ''
+  rca_prompt_file:
+    description: 'Path to a file in the repo containing custom Root Cause Analysis instructions. If provided, Claude will read and follow this file for RCA instead of the built-in analysis. This lets you plug in your own observability stack (e.g., Logfire, Datadog APM, Honeycomb).'
+    required: false
+    default: ''
+  additional_mcp_config:
+    description: 'JSON object of additional MCP server configs to merge into .mcp.json. Use this to connect Claude to extra tools your RCA skill needs (e.g., Logfire, Grafana, PagerDuty MCP servers).'
+    required: false
+    default: ''
+  additional_allowed_tools:
+    description: 'Comma-separated list of additional tool names to allow beyond the defaults (e.g., "mcp__logfire__arbitrary_query,mcp__logfire__find_exceptions_in_file").'
+    required: false
+    default: ''
   slack_webhook_url:
     description: 'Slack incoming webhook URL. If provided, sends a summary notification.'
     required: false
@@ -80,19 +92,15 @@ runs:
     - name: Create MCP Config
       shell: bash
       run: |
-        cat > .mcp.json << EOF
-        {
-          "mcpServers": {
-            "linear-server": {
-              "command": "npx",
-              "args": ["-y", "@linear/mcp-server-linear"],
-              "env": {
-                "LINEAR_API_KEY": "${{ inputs.linear_api_key }}"
-              }
-            }
-          }
-        }
-        EOF
+        # Build base config with Linear server
+        BASE='{"mcpServers":{"linear-server":{"command":"npx","args":["-y","@linear/mcp-server-linear"],"env":{"LINEAR_API_KEY":"${{ inputs.linear_api_key }}"}}}}'
+
+        ADDITIONAL='${{ inputs.additional_mcp_config }}'
+        if [ -n "$ADDITIONAL" ]; then
+          echo "$BASE" | jq --argjson extra "$ADDITIONAL" '.mcpServers += $extra' > .mcp.json
+        else
+          echo "$BASE" | jq '.' > .mcp.json
+        fi
 
     - name: Monitor Datadog and Create Linear Tickets
       id: monitor
@@ -101,7 +109,7 @@ runs:
         claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
         github_token: ${{ inputs.github_token }}
         show_full_output: true
-        claude_args: "${{ inputs.claude_model != '' && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,mcp__linear-server__list_issues,mcp__linear-server__create_issue,mcp__linear-server__get_issue"
+        claude_args: "${{ inputs.claude_model != '' && format('--model {0} ', inputs.claude_model) || '' }}--allowedTools Bash,Read,Write,mcp__linear-server__list_issues,mcp__linear-server__create_issue,mcp__linear-server__get_issue${{ inputs.additional_allowed_tools != '' && format(',{0}', inputs.additional_allowed_tools) || '' }}"
         prompt: |
           You are a DevOps monitoring agent. Check Datadog for errors in the last ${{ inputs.hours_back }} hour(s) and create Linear tickets.
 
@@ -219,6 +227,14 @@ runs:
           ## Related Links
           - [Datadog Logs](https://app.datadoghq.com/logs?query=...)
           ```
+
+          ${{ inputs.rca_prompt_file != '' && format('
+          ### Step 5.5: Enhanced Root Cause Analysis
+          Before creating tickets, read the file at `{0}` using the Read tool.
+          Follow the instructions in that file with `mode: ci` to perform a deeper root cause analysis using the available MCP tools.
+          Use the error patterns and service names from the Datadog logs to correlate with telemetry data.
+          Your only goal from this file is to produce actionable RCA text — include the findings in each ticket''s "Root Cause Analysis" and "Suggested Fix" sections instead of guessing.
+          ', inputs.rca_prompt_file) || '' }}
 
           ### Step 6: Output Results
           Write a structured summary:

@@ -48,6 +48,10 @@ jobs:
           # linear_label_ids: 'label-uuid-1,label-uuid-2'  # Optional: comma-separated Linear label UUIDs
           hours_back: ${{ github.event.inputs.hours_back || '1' }}
           slack_webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # --- Custom RCA (optional) ---
+          # rca_prompt_file: '.github/rca-instructions.md'
+          # additional_mcp_config: '{"logfire":{"command":"npx","args":["-y","logfire-mcp"],"env":{"LOGFIRE_READ_TOKEN":"${{ secrets.LOGFIRE_READ_TOKEN }}"}}}'
+          # additional_allowed_tools: 'mcp__logfire__arbitrary_query,mcp__logfire__find_exceptions_in_file'
 
   # ── Stage 2: Resolve each new ticket ──────────────────────────────
   resolve:
