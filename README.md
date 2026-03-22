@@ -50,7 +50,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
-      - uses: ask-commit/ai-oncall-agent@v1
+      - uses: Autonomy-AI/ai-oncall-agent@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -65,7 +65,7 @@ To also **auto-fix** each new ticket, see the [full example pipeline](.github/wo
 
 ## Two Actions
 
-### `ask-commit/ai-oncall-agent@v1` — Error Monitor
+### `Autonomy-AI/ai-oncall-agent@v1` — Error Monitor
 
 Scans Datadog for production errors and creates deduplicated Linear tickets.
 
@@ -105,7 +105,7 @@ Scans Datadog for production errors and creates deduplicated Linear tickets.
 | `duplicates_done` | JSON array of duplicate tickets previously resolved |
 | `has_results` | `true` if any results were found |
 
-### `ask-commit/ai-oncall-agent/resolve@v1` — Issue Resolver
+### `Autonomy-AI/ai-oncall-agent/resolve@v1` — Issue Resolver
 
 Takes a Linear issue ID, investigates the root cause, implements a fix, and opens a PR.
 
@@ -183,7 +183,7 @@ For each error group, perform the following analysis using the available MCP too
 ### Example Workflow with Custom RCA
 
 ```yaml
-- uses: ask-commit/ai-oncall-agent@v1
+- uses: Autonomy-AI/ai-oncall-agent@v1
   with:
     claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     github_token: ${{ secrets.GITHUB_TOKEN }}

@@ -230,7 +230,10 @@ runs:
 
           ${{ inputs.rca_prompt_file != '' && format('
           ### Step 5.5: Enhanced Root Cause Analysis
-          Before creating tickets, read the file at `{0}` using the Read tool. Follow the instructions in that file to perform a deeper root cause analysis using the available MCP tools. Include the findings from this analysis in each ticket''s "Root Cause Analysis" and "Suggested Fix" sections instead of guessing.
+          Before creating tickets, read the file at `{0}` using the Read tool.
+          Follow the instructions in that file with `mode: ci` to perform a deeper root cause analysis using the available MCP tools.
+          Use the error patterns and service names from the Datadog logs to correlate with telemetry data.
+          Your only goal from this file is to produce actionable RCA text — include the findings in each ticket''s "Root Cause Analysis" and "Suggested Fix" sections instead of guessing.
           ', inputs.rca_prompt_file) || '' }}
 
           ### Step 6: Output Results
