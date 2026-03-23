@@ -242,13 +242,13 @@ runs:
           cat > $GITHUB_WORKSPACE/tickets.json << 'EOF'
           {
             "new": [
-              {"id": "issue-uuid", "identifier": "ENG-XXX", "url": "https://linear.app/...", "title": "..."}
+              {"id": "issue-uuid", "identifier": "ENG-XXX", "url": "https://linear.app/...", "title": "...", "occurrences": 5}
             ],
             "duplicates_open": [
-              {"identifier": "ENG-YYY", "url": "https://linear.app/...", "title": "...", "status": "In Progress"}
+              {"identifier": "ENG-YYY", "url": "https://linear.app/...", "title": "...", "status": "In Progress", "occurrences": 12}
             ],
             "duplicates_done": [
-              {"identifier": "ENG-ZZZ", "url": "https://linear.app/...", "title": "...", "status": "Done"}
+              {"identifier": "ENG-ZZZ", "url": "https://linear.app/...", "title": "...", "status": "Done", "occurrences": 2}
             ]
           }
           EOF

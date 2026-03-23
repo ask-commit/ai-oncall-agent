@@ -15,19 +15,42 @@ DUPS_DONE_COUNT=$(echo "$DUPS_DONE" | jq length)
 
 MESSAGE=""
 
+format_occurrences() {
+  local n="$1"
+  if [ -z "$n" ] || [ "$n" = "null" ]; then
+    echo ""
+  elif [ "$n" -gt 10 ]; then
+    echo " *:red_circle: ${n} occurrences*"
+  else
+    echo " (${n} occurrences)"
+  fi
+}
+
 if [ "$NEW_COUNT" -gt 0 ]; then
-  NEW_LINES=$(echo "$NEW_TICKETS" | jq -r '.[] | "• <\(.url // "")|\(.identifier // "unknown")>: \(.title // "" | gsub("\\[Auto\\] "; ""))"' | head -10)
-  MESSAGE="*New ($NEW_COUNT):*\n$NEW_LINES"
+  NEW_LINES=$(echo "$NEW_TICKETS" | jq -r '.[] | [.url // "", .identifier // "unknown", (.title // "" | gsub("\\[Auto\\] "; "")), (.occurrences | tostring)] | @tsv' | head -10 | \
+    while IFS=$'\t' read -r url id title occ; do
+      occ_str=$(format_occurrences "$occ")
+      echo "• *<${url}|${id}>*${occ_str}: ${title}"
+    done)
+  MESSAGE=":new: *New ($NEW_COUNT):*\n$NEW_LINES"
 fi
 
 if [ "$DUPS_OPEN_COUNT" -gt 0 ]; then
-  DUPS_OPEN_LINES=$(echo "$DUPS_OPEN" | jq -r '.[] | "• <\(.url // "")|\(.identifier // "unknown")>: \(.title // "" | gsub("\\[Auto\\] "; "")) _(\(.status // "unknown"))_"' | head -10)
+  DUPS_OPEN_LINES=$(echo "$DUPS_OPEN" | jq -r '.[] | [.url // "", .identifier // "unknown", (.title // "" | gsub("\\[Auto\\] "; "")), (.status // "unknown"), (.occurrences | tostring)] | @tsv' | head -10 | \
+    while IFS=$'\t' read -r url id title status occ; do
+      occ_str=$(format_occurrences "$occ")
+      echo "• <${url}|${id}>${occ_str}: ${title} _(${status})_"
+    done)
   [ -n "$MESSAGE" ] && MESSAGE="$MESSAGE\n\n"
   MESSAGE="${MESSAGE}*Duplicates - Open ($DUPS_OPEN_COUNT):*\n$DUPS_OPEN_LINES"
 fi
 
 if [ "$DUPS_DONE_COUNT" -gt 0 ]; then
-  DUPS_DONE_LINES=$(echo "$DUPS_DONE" | jq -r '.[] | "• <\(.url // "")|\(.identifier // "unknown")>: \(.title // "" | gsub("\\[Auto\\] "; ""))"' | head -10)
+  DUPS_DONE_LINES=$(echo "$DUPS_DONE" | jq -r '.[] | [.url // "", .identifier // "unknown", (.title // "" | gsub("\\[Auto\\] "; "")), (.occurrences | tostring)] | @tsv' | head -10 | \
+    while IFS=$'\t' read -r url id title occ; do
+      occ_str=$(format_occurrences "$occ")
+      echo "• <${url}|${id}>${occ_str}: ${title}"
+    done)
   [ -n "$MESSAGE" ] && MESSAGE="$MESSAGE\n\n"
   MESSAGE="${MESSAGE}*Recurring - Previously Resolved ($DUPS_DONE_COUNT):*\n$DUPS_DONE_LINES"
 fi
